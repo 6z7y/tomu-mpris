@@ -7,13 +7,13 @@ Exposes tomu playback over the MPRIS D-Bus interface.
 ## How It Works
 
 ```
-┌─────────────────┐       /tmp/tomu.inf        ┌─────────────────┐
+┌─────────────────┐       /tmp/tomu.inf         ┌─────────────────┐
 │                 │ ──────────────────────────▶ │                 │
 │      tomu       │        (poll 100ms)         │   tomu-mpris    │
 │   (server)      │                             │   (mpris bridge)│
 │                 │ ◀────────────────────────── │                 │
 └─────────────────┘       /tmp/tomu.cmd         └────────┬────────┘
-                           (commands)                     │
+                           (commands)                    │
                                                          │ D-Bus
                                                          ▼
                                                 ┌─────────────────┐
