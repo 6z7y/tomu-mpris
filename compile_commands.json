@@ -1,0 +1,23 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/cc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-g",
+      "-O3",
+      "-Iinclude",
+      "-I/usr/include/dbus-1.0",
+      "-I/usr/lib64/dbus-1.0/include",
+      "-I/usr/include/dbus-1.0",
+      "-I/usr/lib64/dbus-1.0/include",
+      "-o",
+      "tomu-mpris",
+      "mpris.c"
+    ],
+    "directory": "/home/ee/Documents/Programing/c-lang/project/tomu-mpris",
+    "file": "/home/ee/Documents/Programing/c-lang/project/tomu-mpris/mpris.c",
+    "output": "/home/ee/Documents/Programing/c-lang/project/tomu-mpris/tomu-mpris"
+  }
+]
