@@ -4,14 +4,13 @@ LIBS         := -lpthread $(shell pkg-config --libs dbus-1)
 INSTALL_PATH := /usr/local/bin
 
 MPRIS_NAME    := tomu-mpris
-MPRIS_SRC     := $(wildcard *.c)
+MPRIS_SRC     := $(wildcard src/*.c)
 
 # build
 all: $(MPRIS_NAME)
 
 $(MPRIS_NAME):
 	$(CC) $(MPRIS_SRC) -o $@ $(CFLAGS) $(shell pkg-config --cflags --libs dbus-1) -lpthread
-
 
 # install
 install: all

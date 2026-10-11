@@ -1,6 +1,7 @@
 #ifndef MPRIS_H
 #define MPRIS_H
 
+#include <stdio.h>
 #include <stdint.h>
 #include <dbus/dbus.h>
 
@@ -10,7 +11,7 @@
 #define IFACE_PLAYER "org.mpris.MediaPlayer2.Player"
 #define IFACE_PROPS "org.freedesktop.DBus.Properties"
 
-#define STATE_FILE  "/tmp/tomu.inf"
+#define STATE_FILE  "/tmp/tomu.fifo"
 #define CMD_FILE    "/tmp/tomu.cmd"
 
 typedef struct {
@@ -39,6 +40,7 @@ typedef struct {
 } Information;
 
 typedef struct {
+  FILE *fifo_file;
   Information inf;
   Metadata data;
 } MprisState;

@@ -4,14 +4,88 @@
 #include <stdarg.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <ctype.h>
 #include <dbus/dbus.h>
 
+#include "errors.h"
 #include "mpris.h"
 
-static void die(const char *msg) {
-  fprintf(stderr, "%s\n", msg);
-  exit(1);
+void fifo_file_reader(MprisState *ctx, int ON)
+{
+  if (ON) {
+    int fd = open(STATE_FILE, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) die("fd file:");
+
+    ctx->fifo_file = fdopen(fd, "r");
+    if (!ctx->fifo_file) die("Fifo file:");
+  }
+  else {
+    if (ctx->fifo_file) {
+      fclose(ctx->fifo_file);
+    }
+  }
 }
+
+static void uri_encode(const char *in, char *out, size_t n) {
+  static const char *safe = "/-_.~";
+  size_t j = 0;
+  for (; *in && j + 4 < n; in++) {
+    unsigned char c = *in;
+    if (isalnum(c) || strchr(safe, c)) out[j++] = c;
+    else j += snprintf(out + j, n - j, "%%%02X", c);
+  }
+  out[j] = '\0';
+}
+static void parser_fifo_line(MprisState *st, char *line)
+{
+  char *sep = strchr(line, ':');
+  if (!sep) return;
+  *sep = '\0';
+  const char *key = line;
+  const char *val = sep + 1;
+
+  if      (!strcmp(key, "STATUS"))       strncpy(st->data.status, val, sizeof(st->data.status) - 1);
+  else if (!strcmp(key, "ARTIST"))       strncpy(st->data.artist, val, sizeof(st->data.artist) - 1);
+  else if (!strcmp(key, "TITLE"))        strncpy(st->data.title, val, sizeof(st->data.title) - 1);
+  else if (!strcmp(key, "ALBUM"))        strncpy(st->data.album, val, sizeof(st->data.album) - 1);
+  else if (!strcmp(key, "ALBUM_ARTIST")) strncpy(st->data.album_artist, val, sizeof(st->data.album_artist) - 1);
+  else if (!strcmp(key, "COMPOSER"))     strncpy(st->data.composer, val, sizeof(st->data.composer) - 1);
+  else if (!strcmp(key, "GENRE"))        strncpy(st->data.genre, val, sizeof(st->data.genre) - 1);
+  else if (!strcmp(key, "DATE"))         strncpy(st->data.date, val, sizeof(st->data.date) - 1);
+  else if (!strcmp(key, "TRACK"))        strncpy(st->data.track, val, sizeof(st->data.track) - 1);
+  else if (!strcmp(key, "DISC"))         strncpy(st->data.disc, val, sizeof(st->data.disc) - 1);
+  else if (!strcmp(key, "COVER"))        strncpy(st->data.cover_path, val, sizeof(st->data.cover_path) - 1);
+  else if (!strcmp(key, "URL"))          strncpy(st->data.url, val, sizeof(st->data.url) - 1);
+
+  else if (!strcmp(key, "LOOP"))         strncpy(st->inf.loop, val, sizeof(st->inf.loop) - 1);
+  else if (!strcmp(key, "DURATION"))     st->inf.duration = atoi(val);
+  else if (!strcmp(key, "POSITION"))     st->inf.position = atoi(val);
+  else if (!strcmp(key, "VOLUME"))       st->inf.volume   = atof(val);
+  else if (!strcmp(key, "SPEED"))        st->inf.speed    = atof(val);
+  else if (!strcmp(key, "SHUFFLE"))      st->inf.shuffle  = atoi(val);
+}
+
+
+void cmd_write_fmt(const char *fmt, ...) {
+  FILE *f = fopen(CMD_FILE, "a");
+  if (!f) return;
+  flock(fileno(f), LOCK_EX);
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(f, fmt, ap);
+  va_end(ap);
+  fprintf(f, "\n");
+  fflush(f);
+  flock(fileno(f), LOCK_UN);
+  fclose(f);
+}
+
+void cmd_write(const char *cmd) {
+  cmd_write_fmt("%s", cmd);
+}
+
 
 static void dbus_err_check(DBusError *err, const char *msg) {
   if (dbus_error_is_set(err)) {
@@ -19,21 +93,6 @@ static void dbus_err_check(DBusError *err, const char *msg) {
     dbus_error_free(err);
     exit(1);
   }
-}
-
-void cmd_write_fmt(const char *fmt, ...) {
-  FILE *f = fopen(CMD_FILE, "a");
-  if (!f) return;
-  va_list ap;
-  va_start(ap, fmt);
-  vfprintf(f, fmt, ap);
-  va_end(ap);
-  fprintf(f, "\n");
-  fclose(f);
-}
-
-void cmd_write(const char *cmd) {
-  cmd_write_fmt("%s", cmd);
 }
 
 static void reply_empty(DBusConnection *conn, DBusMessage *msg) {
@@ -135,41 +194,21 @@ static void dict_add_path(DBusMessageIter *arr, const char *key, const char *val
 
 // --- parse /tmp/tomu.inf ---
 
-int state_load(MprisState *st) {
-  FILE *f = fopen(STATE_FILE, "r");
-  if (!f) return -1;
+int state_load(MprisState *st)
+{
+  if (!st->fifo_file) return -1;
 
   char line[1024];
-  while (fgets(line, sizeof(line), f)) {
+  while (fgets(line, sizeof(line), st->fifo_file)) {
     line[strcspn(line, "\n")] = '\0';
-    char *sep = strchr(line, ':');
-    if (!sep) continue;
-    *sep = '\0';
-    const char *key = line;
-    const char *val = sep + 1;
-
-    if (!strcmp(key, "STATUS"))       strncpy(st->data.status, val, sizeof(st->data.status) - 1);
-    else if (!strcmp(key, "ARTIST"))  strncpy(st->data.artist, val, sizeof(st->data.artist) - 1);
-    else if (!strcmp(key, "TITLE"))   strncpy(st->data.title, val, sizeof(st->data.title) - 1);
-    else if (!strcmp(key, "ALBUM"))   strncpy(st->data.album, val, sizeof(st->data.album) - 1);
-    else if (!strcmp(key, "ALBUM_ARTIST")) strncpy(st->data.album_artist, val, sizeof(st->data.album_artist) - 1);
-    else if (!strcmp(key, "COMPOSER"))     strncpy(st->data.composer, val, sizeof(st->data.composer) - 1);
-    else if (!strcmp(key, "GENRE"))  strncpy(st->data.genre, val, sizeof(st->data.genre) - 1);
-    else if (!strcmp(key, "DATE"))   strncpy(st->data.date, val, sizeof(st->data.date) - 1);
-    else if (!strcmp(key, "TRACK"))  strncpy(st->data.track, val, sizeof(st->data.track) - 1);
-    else if (!strcmp(key, "DISC"))   strncpy(st->data.disc, val, sizeof(st->data.disc) - 1);
-    else if (!strcmp(key, "COVER"))  strncpy(st->data.cover_path, val, sizeof(st->data.cover_path) - 1);
-    else if (!strcmp(key, "URL"))    strncpy(st->data.url, val, sizeof(st->data.url) - 1);
-
-    else if (!strcmp(key, "LOOP"))   strncpy(st->inf.loop, val, sizeof(st->inf.loop) - 1);
-    else if (!strcmp(key, "DURATION"))  st->inf.duration = atoi(val);
-    else if (!strcmp(key, "POSITION"))  st->inf.position = atoi(val);
-    else if (!strcmp(key, "VOLUME"))    st->inf.volume = atof(val);
-    else if (!strcmp(key, "SPEED"))     st->inf.speed = atof(val);
-    else if (!strcmp(key, "SHUFFLE"))   st->inf.shuffle = atoi(val);
+    parser_fifo_line(st, line);
   }
 
-  fclose(f);
+  // IMPORTANT: with O_NONBLOCK, stdio sets EOF/error on EAGAIN.
+  // Without clearerr, next call returns NULL forever.
+  if (feof(st->fifo_file) || ferror(st->fifo_file))
+    clearerr(st->fifo_file);
+
   return 0;
 }
 
@@ -183,8 +222,12 @@ static void append_metadata(MprisState *st, DBusMessageIter *var) {
     dict_add_int64(&arr, "mpris:length", (int64_t)st->inf.duration * 1000000);
   if (st->data.artist[0])
     dict_add_strarray1(&arr, "xesam:artist", st->data.artist);
-  if (st->data.cover_path[0])
-    dict_add_string(&arr, "mpris:artUrl", st->data.cover_path);
+  if (st->data.cover_path[0]) {
+    char enc[1800], uri[1900];
+    uri_encode(st->data.cover_path, enc, sizeof(enc));
+    snprintf(uri, sizeof(uri), "file://%s", enc);
+    dict_add_string(&arr, "mpris:artUrl", uri);
+  }
   if (st->data.composer[0])
     dict_add_strarray1(&arr, "xesam:composer", st->data.composer);
   if (st->data.track[0])
@@ -373,7 +416,29 @@ static void handle_message(DBusConnection *conn, DBusMessage *msg, MprisState *s
     DBusError err;
     dbus_error_init(&err);
     if (dbus_message_get_args(msg, &err, DBUS_TYPE_STRING, &src, DBUS_TYPE_INVALID)) {
-      cmd_write_fmt("OPEN:%s", src);
+
+      char path[1024];
+      snprintf(path, sizeof(path), "%s", src);
+
+      // strip file:// prefix
+      char *p = path;
+      if (!strncmp(p, "file://", 7)) p += 7;
+
+      // decode %XX in-place
+      char *r = p, *w = p;
+      while (*r) {
+        if (*r == '%' && isxdigit((unsigned char)r[1]) && isxdigit((unsigned char)r[2])) {
+          int hi = (r[1] <= '9') ? r[1]-'0' : (tolower(r[1])-'a'+10);
+          int lo = (r[2] <= '9') ? r[2]-'0' : (tolower(r[2])-'a'+10);
+          *w++ = (char)((hi << 4) | lo);
+          r += 3;
+        } else {
+          *w++ = *r++;
+        }
+      }
+      *w = '\0';
+
+      cmd_write_fmt("OPEN:%s", p);
       reply_empty(conn, msg);
     } else {
       DBusMessage *error = dbus_message_new_error(msg,
@@ -445,7 +510,6 @@ void mpris_notify_change(DBusConnection *conn, MprisState *st) {
   dbus_message_unref(signal);
 }
 
-// --- main: poll /tmp/tomu.inf, dispatch dbus, write to /tmp/tomu.cmd ---
 
 int main(void) {
   DBusConnection *conn = NULL;
@@ -453,6 +517,7 @@ int main(void) {
 
   MprisState st = {0};
   strncpy(st.data.status, "Stopped", sizeof(st.data.status) - 1);
+  fifo_file_reader(&st, 1);
 
   fprintf(stderr, "tomu-mpris: running\n");
 
