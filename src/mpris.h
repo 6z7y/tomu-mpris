@@ -11,7 +11,7 @@
 #define IFACE_PLAYER "org.mpris.MediaPlayer2.Player"
 #define IFACE_PROPS "org.freedesktop.DBus.Properties"
 
-#define STATE_FILE  "/tmp/tomu.fifo"
+#define STATE_FILE  "/tmp/tomu.inf"
 #define CMD_FILE    "/tmp/tomu.cmd"
 
 typedef struct {
